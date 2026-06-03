@@ -32,6 +32,7 @@ Route::post('/bookings', [BookingController::class, 'store']);
 Route::get('/vehicles', [VehicleController::class, 'index']);
 Route::get('/vehicle-categories', [VehicleController::class, 'categories']);
 Route::post('/vehicle-categories', [VehicleController::class, 'storeCategory']);
+Route::post('/vehicles/image', [VehicleController::class, 'uploadImage']);
 Route::post('/vehicles', [VehicleController::class, 'store']);
 Route::put('/vehicles/{vehicle}', [VehicleController::class, 'update']);
 Route::delete('/vehicles/{vehicle}', [VehicleController::class, 'destroy']);

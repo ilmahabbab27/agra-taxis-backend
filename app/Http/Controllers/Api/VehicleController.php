@@ -38,9 +38,38 @@ class VehicleController extends Controller
 
     public function destroy(Vehicle $vehicle)
     {
+        if ($vehicle->img && str_starts_with($vehicle->img, '/vehicles/')) {
+            $filePath = public_path(ltrim($vehicle->img, '/'));
+            if (file_exists($filePath)) {
+                unlink($filePath);
+            }
+        }
+
         $vehicle->delete();
 
         return response()->json(['message' => 'Vehicle deleted.']);
+    }
+
+    public function uploadImage(Request $request)
+    {
+        $request->validate([
+            'image' => ['required', 'file', 'image', 'max:5120'],
+        ]);
+
+        $file = $request->file('image');
+        $filename = uniqid('vehicle_', true) . '.' . $file->getClientOriginalExtension();
+
+        // Write directly to the public-accessible vehicles/ folder so no
+        // storage symlink is needed on shared hosting.
+        $dest = public_path('vehicles');
+        if (! is_dir($dest)) {
+            mkdir($dest, 0775, true);
+        }
+        $file->move($dest, $filename);
+
+        return response()->json([
+            'url' => '/vehicles/' . $filename,
+        ], 201);
     }
 
     public function categories()
