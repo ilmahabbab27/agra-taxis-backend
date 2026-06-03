@@ -25,6 +25,7 @@ Route::post('/admin/login', [AdminAuthController::class, 'login']);
 Route::get('/places/predict', [PlaceController::class, 'predict']);
 Route::post('/estimate', [EstimateController::class, 'calculate']);
 Route::post('/chatbot/message', [ChatbotController::class, 'message']);
+Route::post('/chatbot/estimate', [ChatbotController::class, 'estimate']);
 Route::post('/chatbot/booking', [QuickBookingController::class, 'store']);
 Route::post('/quick-booking', [QuickBookingController::class, 'store']);
 Route::post('/bookings', [BookingController::class, 'store']);

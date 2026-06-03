@@ -8,6 +8,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Validation\Rule;
 
 class ChatbotController extends Controller
 {
@@ -47,9 +48,87 @@ class ChatbotController extends Controller
         return $this->reply($reply, $next);
     }
 
+    public function estimate(Request $request)
+    {
+        $request->validate([
+            'pickup_text' => ['sometimes', 'string', 'max:200'],
+            'pickup_lat' => ['sometimes', 'numeric'],
+            'pickup_lng' => ['sometimes', 'numeric'],
+            'dropoff_text' => ['sometimes', 'string', 'max:200'],
+            'dropoff_lat' => ['sometimes', 'numeric'],
+            'dropoff_lng' => ['sometimes', 'numeric'],
+            'vehicle' => ['sometimes', 'string', 'max:100'],
+            'ac' => ['sometimes', Rule::in(['ac', 'non-ac'])],
+            'days' => ['sometimes', 'integer', 'min:1', 'max:5'],
+        ]);
+
+        $pickup = $this->resolveLocation($request->only(['pickup_text', 'pickup_lat', 'pickup_lng']), 'pickup');
+        $dropoff = $this->resolveLocation($request->only(['dropoff_text', 'dropoff_lat', 'dropoff_lng']), 'dropoff');
+
+        if (!$pickup || !$dropoff) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Could not resolve one or both locations. Please provide clearer pickup and dropoff information.',
+            ], 422);
+        }
+
+        $distanceResult = $this->fetchDistance(
+            $pickup['lat'] . ',' . $pickup['lng'], 
+            $dropoff['lat'] . ',' . $dropoff['lng']
+        );
+
+        if (!$distanceResult) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Could not calculate the driving distance for this route.',
+            ], 422);
+        }
+
+        $vehicleName = $request->input('vehicle', 'Sedan');
+        $vehicle = Vehicle::where('name', $vehicleName)->first();
+        if (!$vehicle) {
+            $vehicle = Vehicle::where('name', 'Sedan')->first();
+        }
+
+        if (!$vehicle) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No vehicle is available for estimate.',
+            ], 422);
+        }
+
+        $days = $request->input('days', 1);
+        $ac = $request->input('ac', 'ac');
+
+        $fare = $this->calculateFare($vehicle, $distanceResult['km'], $days, $ac);
+
+        return response()->json([
+            'success' => true,
+            'pickup' => $pickup['formatted'],
+            'dropoff' => $dropoff['formatted'],
+            'distance_km' => round($distanceResult['km'], 2),
+            'vehicle' => $vehicle->name,
+            'ac' => $fare['ac_label'],
+            'days' => $days,
+            'price_per_km' => $fare['price_per_km'],
+            'driving_cost' => $fare['driving_cost'],
+            'stay_cost' => $fare['stay_cost'],
+            'total_cost' => $fare['total_cost'],
+            'message' => sprintf(
+                'I assumed pickup is %s and dropoff is %s. Estimated fare is Rs. %s for approximately %s km.',
+                $pickup['formatted'],
+                $dropoff['formatted'],
+                number_format($fare['total_cost'], 2),
+                number_format($distanceResult['km'], 2)
+            ),
+        ]);
+    }
+
     private function handleStep(string $step, string $message, array $data, string $sessionId): array
     {
         switch ($step) {
+
+            // ── Step 1: Pickup ────────────────────────────────────────────────
             case 'pickup':
                 $resolved = $this->geocode($message);
                 if (!$resolved) {
@@ -58,8 +137,10 @@ class ChatbotController extends Controller
                 $data['pickup']     = $resolved['formatted'];
                 $data['pickup_lat'] = $resolved['lat'];
                 $data['pickup_lng'] = $resolved['lng'];
+
                 return ['destination', "Got it! Pickup: *{$resolved['formatted']}*\n\nWhere are you heading to?", $data];
 
+            // ── Step 2: Destination ───────────────────────────────────────────
             case 'destination':
                 $resolved = $this->geocode($message);
                 if (!$resolved) {
@@ -68,8 +149,48 @@ class ChatbotController extends Controller
                 $data['destination']     = $resolved['formatted'];
                 $data['destination_lat'] = $resolved['lat'];
                 $data['destination_lng'] = $resolved['lng'];
-                return ['days', "Great! Destination: *{$resolved['formatted']}*\n\nHow many days is your trip? (1–5)", $data];
 
+                // Build and show vehicle list at step 3
+                $vehicleList = $this->buildVehicleList();
+                $data['vehicle_list'] = $vehicleList;
+
+                $lines   = [];
+                $lines[] = "Destination: *{$resolved['formatted']}*";
+                $lines[] = "";
+                $lines[] = "Please choose your vehicle:";
+                $lines[] = "";
+                foreach ($vehicleList as $i => $v) {
+                    $lines[] = ($i + 1) . ". *{$v['name']}* — {$v['seats']} seats";
+                }
+                $lines[] = "";
+                $lines[] = "Reply with the number or name of your preferred vehicle.";
+
+                return ['vehicle', implode("\n", $lines), $data];
+
+            // ── Step 3: Vehicle selection ─────────────────────────────────────
+            case 'vehicle':
+                $choice  = trim($message);
+                $options = collect($data['vehicle_list'] ?? []);
+
+                if (is_numeric($choice)) {
+                    $index    = (int) $choice - 1;
+                    $selected = $options->values()->get($index);
+                } else {
+                    $selected = $options->first(fn($v) => strtolower($v['name']) === strtolower($choice));
+                }
+
+                if (!$selected) {
+                    $list = $options->values()->map(fn($v, $i) => ($i + 1) . '. ' . $v['name'])->implode("\n");
+                    return ['vehicle', "Please choose a valid vehicle by number or name:\n\n{$list}", $data];
+                }
+
+                $data['chosen_vehicle']    = $selected['name'];
+                $data['chosen_vehicle_id'] = $selected['id'];
+                $data['chosen_seats']      = $selected['seats'];
+
+                return ['days', "Great choice! *{$selected['name']}* selected.\n\nHow many days is your trip? (1–5)", $data];
+
+            // ── Step 4: Days ──────────────────────────────────────────────────
             case 'days':
                 $days = (int) $message;
                 if (!is_numeric(trim($message)) || $days < 1 || $days > 5) {
@@ -78,6 +199,7 @@ class ChatbotController extends Controller
                 $data['days'] = $days;
                 return ['pax', "How many passengers will be travelling?", $data];
 
+            // ── Step 5: Passengers ────────────────────────────────────────────
             case 'pax':
                 $pax = (int) $message;
                 if (!is_numeric(trim($message)) || $pax < 1 || $pax > 100) {
@@ -86,6 +208,7 @@ class ChatbotController extends Controller
                 $data['pax'] = $pax;
                 return ['ac', "Do you prefer AC or Non-AC?\nReply: *ac*, *non-ac*, or *both*", $data];
 
+            // ── Step 6: AC preference ─────────────────────────────────────────
             case 'ac':
                 $ac = strtolower(trim($message));
                 if (!in_array($ac, ['ac', 'non-ac', 'both'])) {
@@ -94,78 +217,69 @@ class ChatbotController extends Controller
                 $data['ac'] = $ac;
                 return ['date', "What date would you like to travel?\n(e.g. 25 May 2026)", $data];
 
+            // ── Step 7: Date + fare calculation ──────────────────────────────
             case 'date':
                 $parsed = strtotime($message);
                 if (!$parsed || $parsed < strtotime('today')) {
                     return ['date', "Please enter a valid future date (e.g. 25 May 2026).", $data];
                 }
                 $data['date'] = date('Y-m-d', $parsed);
-                $estimates    = $this->getEstimates($data);
 
-                if ($estimates === null) {
+                $origin         = $data['pickup_lat'] . ',' . $data['pickup_lng'];
+                $dest           = $data['destination_lat'] . ',' . $data['destination_lng'];
+                $distanceResult = $this->fetchDistance($origin, $dest);
+
+                if (!$distanceResult) {
                     return ['pickup', "Sorry, I couldn't calculate the distance. Let's try again.\n\nWhere would you like to be picked up from?", []];
                 }
 
-                $data['estimates']     = $estimates['estimates'];
-                $data['distance_km']   = $estimates['distance_km'];
-                $data['duration_text'] = $estimates['duration_text'];
+                $data['distance_km']   = round($distanceResult['km'], 2);
+                $data['duration_text'] = $distanceResult['duration'];
 
-                return ['vehicle', $this->formatEstimates($estimates, $data), $data];
+                $vehicle = Vehicle::find($data['chosen_vehicle_id']);
+                $fare    = $this->calculateFare($vehicle, $data['distance_km'], $data['days'], $data['ac']);
 
-            case 'vehicle':
-                $choice  = trim($message);
-                $options = collect($data['estimates']);
-
-                // Match by number (1, 2, 3...) or by name
-                if (is_numeric($choice)) {
-                    $index   = (int) $choice - 1;
-                    $selected = $options->values()->get($index);
-                } else {
-                    $selected = $options->first(fn($e) => strtolower($e['vehicle']) === strtolower($choice));
-                }
-
-                if (!$selected) {
-                    $list = $options->values()->map(fn($e, $i) => ($i + 1) . '. ' . $e['vehicle'])->implode("\n");
-                    return ['vehicle', "Please choose a valid vehicle by number or name:\n\n{$list}", $data];
-                }
-
-                $data['chosen_vehicle'] = $selected['vehicle'];
-                $data['chosen_ac']      = $selected['options'][0]['ac'] ? 'AC' : 'Non-AC';
-                $data['chosen_cost']    = $selected['options'][0]['total_cost'];
+                $data['chosen_ac']    = $fare['ac_label'];
+                $data['chosen_cost']  = $fare['total_cost'];
+                $data['driving_cost'] = $fare['driving_cost'];
+                $data['stay_cost']    = $fare['stay_cost'];
 
                 $summary = implode("\n", [
-                    "Great choice! Here's your booking summary:",
+                    "Here's your booking summary:",
                     "",
-                    "🚗 Vehicle: *{$selected['vehicle']}*",
-                    "📍 Pickup: {$data['pickup']}",
-                    "📍 Destination: {$data['destination']}",
-                    "📅 Date: {$data['date']}",
-                    "👥 Passengers: {$data['pax']}",
-                    "❄️ AC: {$data['chosen_ac']}",
-                    "📏 Distance: {$data['distance_km']} km ({$data['duration_text']})",
-                    "💰 Estimated Total: ₹{$data['chosen_cost']}",
+                    "Vehicle:     *{$data['chosen_vehicle']}* ({$data['chosen_seats']} seats)",
+                    "Pickup:      {$data['pickup']}",
+                    "Destination: {$data['destination']}",
+                    "Date:        {$data['date']}",
+                    "Passengers:  {$data['pax']}",
+                    "Comfort:     {$data['chosen_ac']}",
+                    "Distance:    {$data['distance_km']} km ({$data['duration_text']})",
+                    "Driving:     Rs. {$data['driving_cost']}",
+                    "Stay:        Rs. {$data['stay_cost']}",
+                    "Total:       Rs. {$data['chosen_cost']}",
                     "",
                     "Reply *yes* to confirm or *no* to start over.",
                 ]);
 
                 return ['confirm', $summary, $data];
 
+            // ── Step 8: Confirm ───────────────────────────────────────────────
             case 'confirm':
                 $answer = strtolower(trim($message));
 
                 if (in_array($answer, ['yes', 'y', 'confirm', 'ok', 'book'])) {
                     $booking = $this->createBooking($data);
                     return ['done', implode("\n", [
-                        "✅ Your booking has been confirmed!",
+                        "Your booking has been confirmed!",
                         "",
                         "Booking ID: *#{$booking->id}*",
-                        "Vehicle: {$data['chosen_vehicle']}",
-                        "Pickup: {$data['pickup']}",
-                        "Destination: {$data['destination']}",
-                        "Date: {$data['date']}",
-                        "Estimated Cost: ₹{$data['chosen_cost']}",
+                        "Vehicle:    {$data['chosen_vehicle']}",
+                        "Pickup:     {$data['pickup']}",
+                        "Destination:{$data['destination']}",
+                        "Date:       {$data['date']}",
+                        "Total:      Rs. {$data['chosen_cost']}",
                         "",
-                        "We will contact you shortly. Thank you! 🙏",
+                        "We will contact you shortly. Thank you!",
                     ]), $data];
                 }
 
@@ -180,84 +294,35 @@ class ChatbotController extends Controller
         return ['pickup', "Where would you like to be picked up from?", []];
     }
 
-    private function formatEstimates(array $estimates, array $data): string
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private function buildVehicleList(): array
     {
-        $lines   = [];
-        $lines[] = "Here are the available vehicles for *{$data['days']} day(s)*, {$data['pax']} passenger(s):";
-        $lines[] = "Route: {$data['pickup']} → {$data['destination']}";
-        $lines[] = "Distance: {$estimates['distance_km']} km | Drive time: {$estimates['duration_text']}";
-        $lines[] = "";
-
-        foreach ($estimates['estimates'] as $i => $e) {
-            $num     = $i + 1;
-            $lines[] = "{$num}. 🚗 *{$e['vehicle']}* ({$e['seats']} seats)";
-            foreach ($e['options'] as $opt) {
-                $label   = $opt['ac'] ? 'AC' : 'Non-AC';
-                $lines[] = "   {$label}: ₹{$opt['total_cost']} (driving ₹{$opt['driving_cost']} + stay ₹{$opt['stay_cost']})";
-            }
-        }
-
-        $lines[] = "";
-        $lines[] = "Reply with the *number* or *name* of your preferred vehicle.";
-
-        return implode("\n", $lines);
+        return Vehicle::all()->map(fn(Vehicle $v) => [
+            'id'               => $v->id,
+            'name'             => $v->name,
+            'seats'            => $v->seats,
+            'ac_available'     => $v->ac_available,
+            'non_ac_available' => $v->non_ac_available,
+        ])->values()->toArray();
     }
 
-    private function getEstimates(array $data): ?array
+    private function calculateFare(Vehicle $vehicle, float $distanceKm, int $days, string $acPref): array
     {
-        $origin = $data['pickup_lat'] . ',' . $data['pickup_lng'];
-        $dest   = $data['destination_lat'] . ',' . $data['destination_lng'];
+        $useAc = in_array($acPref, ['ac', 'both']) && $vehicle->ac_available;
+        if ($acPref === 'non-ac' && $vehicle->non_ac_available) $useAc = false;
 
-        $distanceResult = $this->fetchDistance($origin, $dest);
-
-        if (!$distanceResult) {
-            return null;
-        }
-
-        $distanceKm = $distanceResult['km'];
-        $days       = (int) $data['days'];
-        $acPref     = $data['ac'];
-
-        $estimates = Vehicle::all()->map(function (Vehicle $vehicle) use ($distanceKm, $days, $acPref) {
-            $options = [];
-
-            if (in_array($acPref, ['ac', 'both']) && $vehicle->ac_available) {
-                $options[] = $this->buildOption($vehicle, $distanceKm, $days, true);
-            }
-
-            if (in_array($acPref, ['non-ac', 'both']) && $vehicle->non_ac_available) {
-                $options[] = $this->buildOption($vehicle, $distanceKm, $days, false);
-            }
-
-            if (empty($options)) return null;
-
-            return [
-                'vehicle' => $vehicle->name,
-                'seats'   => $vehicle->seats,
-                'options' => $options,
-            ];
-        })->filter()->values()->toArray();
-
-        return [
-            'distance_km'   => round($distanceKm, 2),
-            'duration_text' => $distanceResult['duration'],
-            'estimates'     => $estimates,
-        ];
-    }
-
-    private function buildOption(Vehicle $vehicle, float $distanceKm, int $days, bool $ac): array
-    {
-        $pricePerKm  = $ac ? (float) $vehicle->ac_price_per_km : (float) $vehicle->non_ac_price_per_km;
+        $pricePerKm  = $useAc ? (float) $vehicle->ac_price_per_km : (float) $vehicle->non_ac_price_per_km;
         $stayField   = 'stay_price_day' . $days;
         $stayPrice   = (float) ($vehicle->$stayField ?? 0);
         $drivingCost = round($distanceKm * $pricePerKm, 2);
 
         return [
-            'ac'           => $ac,
-            'price_per_km' => $pricePerKm,
-            'driving_cost' => $drivingCost,
-            'stay_cost'    => $stayPrice,
-            'total_cost'   => round($drivingCost + $stayPrice, 2),
+            'ac_label'    => $useAc ? 'AC' : 'Non-AC',
+            'price_per_km'=> $pricePerKm,
+            'driving_cost'=> $drivingCost,
+            'stay_cost'   => $stayPrice,
+            'total_cost'  => round($drivingCost + $stayPrice, 2),
         ];
     }
 
@@ -269,7 +334,6 @@ class ChatbotController extends Controller
         ]);
 
         $result = $response->json('results.0');
-
         if (!$result) return null;
 
         return [
@@ -277,6 +341,46 @@ class ChatbotController extends Controller
             'lng'       => $result['geometry']['location']['lng'],
             'formatted' => $result['formatted_address'],
         ];
+    }
+
+    private function reverseGeocode(float $lat, float $lng): array
+    {
+        $response = Http::withoutVerifying()->get('https://maps.googleapis.com/maps/api/geocode/json', [
+            'latlng' => $lat . ',' . $lng,
+            'key'    => config('services.google.maps_key'),
+        ]);
+
+        $result = $response->json('results.0');
+        if (!$result) {
+            return [
+                'lat' => $lat,
+                'lng' => $lng,
+                'formatted' => sprintf('%s, %s', $lat, $lng),
+            ];
+        }
+
+        return [
+            'lat'       => $result['geometry']['location']['lat'],
+            'lng'       => $result['geometry']['location']['lng'],
+            'formatted' => $result['formatted_address'],
+        ];
+    }
+
+    private function resolveLocation(array $input, string $type): ?array
+    {
+        $textKey = "{$type}_text";
+        $latKey = "{$type}_lat";
+        $lngKey = "{$type}_lng";
+
+        if (!empty($input[$latKey]) && !empty($input[$lngKey])) {
+            return $this->reverseGeocode((float) $input[$latKey], (float) $input[$lngKey]);
+        }
+
+        if (!empty($input[$textKey])) {
+            return $this->geocode($input[$textKey]);
+        }
+
+        return null;
     }
 
     private function fetchDistance(string $origin, string $destination): ?array
@@ -290,7 +394,6 @@ class ChatbotController extends Controller
         ]);
 
         $element = $response->json('rows.0.elements.0');
-
         if (($element['status'] ?? '') !== 'OK') return null;
 
         return [
