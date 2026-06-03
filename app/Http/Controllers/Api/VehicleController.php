@@ -39,7 +39,7 @@ class VehicleController extends Controller
     public function destroy(Vehicle $vehicle)
     {
         if ($vehicle->img && str_starts_with($vehicle->img, '/vehicles/')) {
-            $filePath = public_path(ltrim($vehicle->img, '/'));
+            $filePath = dirname(__DIR__, 4) . '/' . ltrim($vehicle->img, '/');
             if (file_exists($filePath)) {
                 unlink($filePath);
             }
@@ -59,9 +59,10 @@ class VehicleController extends Controller
         $file = $request->file('image');
         $filename = uniqid('vehicle_', true) . '.' . $file->getClientOriginalExtension();
 
-        // Write directly to the public-accessible vehicles/ folder so no
-        // storage symlink is needed on shared hosting.
-        $dest = public_path('vehicles');
+        // Use __DIR__ to get the absolute path regardless of APP_URL subdirectory config.
+        // dirname(__DIR__, 4) goes: Api -> Controllers -> Http -> app -> project root
+        // On shared hosting index.php sits at project root (no public/ subfolder)
+        $dest = dirname(__DIR__, 4) . '/vehicles';
         if (! is_dir($dest)) {
             mkdir($dest, 0775, true);
         }
