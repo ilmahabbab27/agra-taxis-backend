@@ -100,7 +100,8 @@ class ChatbotController extends Controller
         $days = $request->input('days', 1);
         $ac = $request->input('ac', 'ac');
 
-        $fare = $this->calculateFare($vehicle, $distanceResult['km'], $days, $ac);
+        $trip = $request->input('trip', 'one-way');
+        $fare = $this->calculateFare($vehicle, $distanceResult['km'], $days, $ac, $trip);
 
         return response()->json([
             'success' => true,
@@ -111,6 +112,8 @@ class ChatbotController extends Controller
             'ac' => $fare['ac_label'],
             'days' => $days,
             'price_per_km' => $fare['price_per_km'],
+            'effective_price_per_km' => $fare['effective_price_per_km'],
+            'trip_multiplier' => $fare['trip_multiplier'],
             'driving_cost' => $fare['driving_cost'],
             'stay_cost' => $fare['stay_cost'],
             'total_cost' => $fare['total_cost'],
@@ -237,7 +240,7 @@ class ChatbotController extends Controller
                 $data['duration_text'] = $distanceResult['duration'];
 
                 $vehicle = Vehicle::find($data['chosen_vehicle_id']);
-                $fare    = $this->calculateFare($vehicle, $data['distance_km'], $data['days'], $data['ac']);
+                $fare    = $this->calculateFare($vehicle, $data['distance_km'], $data['days'], $data['ac'], $data['trip'] ?? 'one-way');
 
                 $data['chosen_ac']    = $fare['ac_label'];
                 $data['chosen_cost']  = $fare['total_cost'];
@@ -307,19 +310,23 @@ class ChatbotController extends Controller
         ])->values()->toArray();
     }
 
-    private function calculateFare(Vehicle $vehicle, float $distanceKm, int $days, string $acPref): array
+    private function calculateFare(Vehicle $vehicle, float $distanceKm, int $days, string $acPref, string $trip = 'one-way'): array
     {
         $useAc = in_array($acPref, ['ac', 'both']) && $vehicle->ac_available;
         if ($acPref === 'non-ac' && $vehicle->non_ac_available) $useAc = false;
+        $tripMultiplier = $trip === 'round-trip' ? 2 : 1;
 
         $pricePerKm  = $useAc ? (float) $vehicle->ac_price_per_km : (float) $vehicle->non_ac_price_per_km;
         $stayField   = 'stay_price_day' . $days;
         $stayPrice   = (float) ($vehicle->$stayField ?? 0);
-        $drivingCost = round($distanceKm * $pricePerKm, 2);
+        $effectivePricePerKm = round($pricePerKm * $tripMultiplier, 2);
+        $drivingCost = round($distanceKm * $effectivePricePerKm, 2);
 
         return [
             'ac_label'    => $useAc ? 'AC' : 'Non-AC',
             'price_per_km'=> $pricePerKm,
+            'effective_price_per_km' => $effectivePricePerKm,
+            'trip_multiplier' => $tripMultiplier,
             'driving_cost'=> $drivingCost,
             'stay_cost'   => $stayPrice,
             'total_cost'  => round($drivingCost + $stayPrice, 2),

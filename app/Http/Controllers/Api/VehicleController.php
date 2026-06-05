@@ -38,10 +38,12 @@ class VehicleController extends Controller
 
     public function destroy(Vehicle $vehicle)
     {
-        if ($vehicle->img && str_starts_with($vehicle->img, '/vehicles/')) {
-            $filePath = dirname(__DIR__, 4) . '/' . ltrim($vehicle->img, '/');
-            if (file_exists($filePath)) {
-                unlink($filePath);
+        foreach ([$vehicle->img, $vehicle->img2] as $image) {
+            if ($image && str_starts_with($image, '/vehicles/')) {
+                $filePath = dirname(__DIR__, 4) . '/' . ltrim($image, '/');
+                if (file_exists($filePath)) {
+                    unlink($filePath);
+                }
             }
         }
 
@@ -107,9 +109,12 @@ class VehicleController extends Controller
     private function validateVehicle(Request $request, ?Vehicle $vehicle = null)
     {
         $sp = $request->input('stayPrices', []);
+        $perKm = $request->input('perKmPrices', []);
         $request->merge([
-            'ac_price_per_km'    => $request->input('ac_price_per_km', $request->input('acPricePerKm')),
-            'non_ac_price_per_km'=> $request->input('non_ac_price_per_km', $request->input('nonAcPricePerKm')),
+            'ac_price_per_km'    => $request->input('ac_price_per_km', $request->input('acPricePerKm', $perKm['ac']['oneWay']['normal'] ?? 0)),
+            'non_ac_price_per_km'=> $request->input('non_ac_price_per_km', $request->input('nonAcPricePerKm', $perKm['nonAc']['oneWay']['normal'] ?? 0)),
+            'ac_hill_price_per_km' => $request->input('ac_hill_price_per_km', $request->input('acHillPricePerKm', $perKm['ac']['oneWay']['hill'] ?? 0)),
+            'non_ac_hill_price_per_km' => $request->input('non_ac_hill_price_per_km', $request->input('nonAcHillPricePerKm', $perKm['nonAc']['oneWay']['hill'] ?? 0)),
             'ac_available'       => $request->input('ac_available', $request->input('acAvailable')),
             'non_ac_available'   => $request->input('non_ac_available', $request->input('nonAcAvailable')),
             'stay_price_day1'    => $request->input('stay_price_day1', $sp['day1'] ?? 0),
@@ -123,11 +128,16 @@ class VehicleController extends Controller
             'name'               => ['required', 'string', 'max:100', 'unique:vehicles,name,' . optional($vehicle)->id],
             'category'           => ['required', 'string', 'max:100'],
             'img'                => ['nullable', 'string'],
+            'img2'               => ['nullable', 'string'],
             'seats'              => ['required', 'integer', 'min:1', 'max:100'],
             'ac_price_per_km'    => ['nullable', 'numeric', 'min:0', 'max:999999'],
             'non_ac_price_per_km'=> ['nullable', 'numeric', 'min:0', 'max:999999'],
+            'ac_hill_price_per_km' => ['nullable', 'numeric', 'min:0', 'max:999999'],
+            'non_ac_hill_price_per_km' => ['nullable', 'numeric', 'min:0', 'max:999999'],
             'ac_available'       => ['required', 'boolean'],
             'non_ac_available'   => ['required', 'boolean'],
+            'perKmPrices'        => ['nullable', 'array'],
+            'package1Prices'     => ['nullable', 'array'],
             'stay_price_day1'    => ['nullable', 'numeric', 'min:0', 'max:9999999'],
             'stay_price_day2'    => ['nullable', 'numeric', 'min:0', 'max:9999999'],
             'stay_price_day3'    => ['nullable', 'numeric', 'min:0', 'max:9999999'],
@@ -149,11 +159,16 @@ class VehicleController extends Controller
             'name'               => trim($data['name']),
             'category'           => trim($data['category']),
             'img'                => $data['img'] ?: '/assets/car.jpg',
+            'img2'               => $data['img2'] ?? null,
             'seats'              => max(1, (int) $data['seats']),
             'ac_price_per_km'    => $acAvailable ? ($data['ac_price_per_km'] ?? 0) : 0,
             'non_ac_price_per_km'=> $nonAcAvailable ? ($data['non_ac_price_per_km'] ?? 0) : 0,
+            'ac_hill_price_per_km' => $acAvailable ? ($data['ac_hill_price_per_km'] ?? 0) : 0,
+            'non_ac_hill_price_per_km' => $nonAcAvailable ? ($data['non_ac_hill_price_per_km'] ?? 0) : 0,
             'ac_available'       => $acAvailable,
             'non_ac_available'   => $nonAcAvailable,
+            'per_km_prices'      => $this->normalizePerKmPrices($data['perKmPrices'] ?? []),
+            'package1_prices'    => $this->normalizePackagePrices($data['package1Prices'] ?? []),
             'stay_price_day1'    => max(0, (float) ($data['stay_price_day1'] ?? 0)),
             'stay_price_day2'    => max(0, (float) ($data['stay_price_day2'] ?? 0)),
             'stay_price_day3'    => max(0, (float) ($data['stay_price_day3'] ?? 0)),
@@ -169,11 +184,18 @@ class VehicleController extends Controller
             'name'           => $vehicle->name,
             'category'       => $vehicle->category,
             'img'            => $vehicle->img,
+            'img2'           => $vehicle->img2,
+            'images'         => array_values(array_filter([$vehicle->img, $vehicle->img2])),
             'seats'          => $vehicle->seats,
             'acPricePerKm'   => (float) $vehicle->ac_price_per_km,
             'nonAcPricePerKm'=> (float) $vehicle->non_ac_price_per_km,
+            'acHillPricePerKm' => (float) $vehicle->ac_hill_price_per_km,
+            'nonAcHillPricePerKm' => (float) $vehicle->non_ac_hill_price_per_km,
+            'perKmPrices'    => $this->normalizePerKmPrices($vehicle->per_km_prices ?? []),
             'acAvailable'    => $vehicle->ac_available,
             'nonAcAvailable' => $vehicle->non_ac_available,
+            'package1KmLimitPerDay' => 100,
+            'package1Prices' => $this->normalizePackagePrices($vehicle->package1_prices ?? []),
             'stayPrices'     => [
                 'day1' => (float) $vehicle->stay_price_day1,
                 'day2' => (float) $vehicle->stay_price_day2,
@@ -182,5 +204,58 @@ class VehicleController extends Controller
                 'day5' => (float) $vehicle->stay_price_day5,
             ],
         ];
+    }
+
+    private function normalizePackagePrices(array $prices): array
+    {
+        $normalized = [];
+        $keys = array_values(array_filter(array_keys($prices), fn ($key) => preg_match('/^day\d+$/', (string) $key)));
+
+        if (empty($keys)) {
+            $keys = ['day1'];
+        }
+
+        usort($keys, fn ($a, $b) => (int) substr($a, 3) <=> (int) substr($b, 3));
+
+        foreach ($keys as $key) {
+            $row = $prices[$key] ?? [];
+
+            $normalized[$key] = [
+                'acNormal' => max(0, (float) ($row['acNormal'] ?? 0)),
+                'acHill' => max(0, (float) ($row['acHill'] ?? 0)),
+                'nonAcNormal' => max(0, (float) ($row['nonAcNormal'] ?? 0)),
+                'nonAcHill' => max(0, (float) ($row['nonAcHill'] ?? 0)),
+            ];
+        }
+
+        return $normalized;
+    }
+
+    private function normalizePerKmPrices(array $prices): array
+    {
+        $fallback = [
+            'ac' => [
+                'oneWay' => [
+                    'normal' => (float) ($prices['ac']['oneWay']['normal'] ?? $prices['acNormal'] ?? 0),
+                    'hill' => (float) ($prices['ac']['oneWay']['hill'] ?? $prices['acHill'] ?? 0),
+                ],
+                'roundTrip' => [
+                    'normal' => (float) ($prices['ac']['roundTrip']['normal'] ?? $prices['acRoundTripNormal'] ?? ($prices['ac']['oneWay']['normal'] ?? 0)),
+                    'hill' => (float) ($prices['ac']['roundTrip']['hill'] ?? $prices['acRoundTripHill'] ?? ($prices['ac']['oneWay']['hill'] ?? 0)),
+                ],
+            ],
+            'nonAc' => [
+                'oneWay' => [
+                    'normal' => (float) ($prices['nonAc']['oneWay']['normal'] ?? $prices['nonAcNormal'] ?? 0),
+                    'hill' => (float) ($prices['nonAc']['oneWay']['hill'] ?? $prices['nonAcHill'] ?? 0),
+                ],
+                'roundTrip' => [
+                    'normal' => (float) ($prices['nonAc']['roundTrip']['normal'] ?? $prices['nonAcRoundTripNormal'] ?? ($prices['nonAc']['oneWay']['normal'] ?? 0)),
+                    'hill' => (float) ($prices['nonAc']['roundTrip']['hill'] ?? $prices['nonAcRoundTripHill'] ?? ($prices['nonAc']['oneWay']['hill'] ?? 0)),
+                ],
+            ],
+        ];
+
+        return $fallback;
     }
 }

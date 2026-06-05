@@ -74,12 +74,15 @@ class QuickBookingController extends Controller
             return response()->json(['message' => 'Could not calculate driving distance for this route.'], 422);
         }
 
-        $billedKm    = $request->input('trip') === 'round-trip' ? $totalDistanceKm * 2 : $totalDistanceKm;
+        $isRoundTrip = $request->input('trip') === 'round-trip';
+        $tripMultiplier = $isRoundTrip ? 2 : 1;
+        $billedKm    = $totalDistanceKm;
         $days        = (int) $request->input('days');
         $pricePerKm  = $isAc ? (float) $vehicle->ac_price_per_km : (float) $vehicle->non_ac_price_per_km;
         $stayField   = 'stay_price_day' . $days;
         $stayPrice   = (float) ($vehicle->$stayField ?? 0);
-        $drivingCost = round($billedKm * $pricePerKm, 2);
+        $effectivePricePerKm = round($pricePerKm * $tripMultiplier, 2);
+        $drivingCost = round($billedKm * $effectivePricePerKm, 2);
         $totalCost   = round($drivingCost + $stayPrice, 2);
 
         $booking = Booking::create([
@@ -103,6 +106,8 @@ class QuickBookingController extends Controller
             'distance_km'     => round($totalDistanceKm, 2),
             'distance_source' => 'route',
             'price_per_km'    => $pricePerKm,
+            'effective_price_per_km' => $effectivePricePerKm,
+            'trip_multiplier' => $tripMultiplier,
             'driving_cost'    => $drivingCost,
             'stay_cost'       => $stayPrice,
             'total_cost'      => $totalCost,

@@ -66,12 +66,13 @@ class EstimateController extends Controller
             return response()->json(['message' => 'Could not calculate driving distance for this route.'], 422);
         }
 
-        // For round trips double the distance
         $isRoundTrip = $request->input('trip') === 'round-trip';
-        $billedKm    = $isRoundTrip ? $totalDistanceKm * 2 : $totalDistanceKm;
+        $tripMultiplier = $isRoundTrip ? 2 : 1;
+        $billedKm    = $totalDistanceKm;
 
         $isAc        = $request->input('ac') === 'ac';
         $days        = (int) $request->input('days');
+        $isHillCountry = $this->isHillCountry($pickupCoords) || $this->isHillCountry($dropCoords);
 
         if ($isAc && !$vehicle->ac_available) {
             return response()->json(['message' => "{$vehicle->name} does not have an AC option."], 422);
@@ -80,10 +81,11 @@ class EstimateController extends Controller
             return response()->json(['message' => "{$vehicle->name} does not have a Non-AC option."], 422);
         }
 
-        $pricePerKm  = $isAc ? (float) $vehicle->ac_price_per_km : (float) $vehicle->non_ac_price_per_km;
+        $pricePerKm  = $this->resolvePricePerKm($vehicle, $isAc, $isRoundTrip, $isHillCountry);
         $stayField   = 'stay_price_day' . $days;
         $stayPrice   = (float) ($vehicle->$stayField ?? 0);
-        $drivingCost = round($billedKm * $pricePerKm, 2);
+        $effectivePricePerKm = round($pricePerKm, 2);
+        $drivingCost = round($billedKm * $effectivePricePerKm, 2);
         $totalCost   = round($drivingCost + $stayPrice, 2);
 
         $routeLegs = [];
@@ -105,11 +107,16 @@ class EstimateController extends Controller
             'pax'            => (int) $request->input('pax'),
             'pickup'         => $pickupCoords['formatted'],
             'drop'           => $dropCoords['formatted'],
+            'pickup_is_hill_country' => $this->isHillCountry($pickupCoords),
+            'drop_is_hill_country'   => $this->isHillCountry($dropCoords),
+            'hill_country_rate'      => $isHillCountry,
             'stops'          => collect($resolvedStops)->pluck('formatted')->values(),
             'route_legs'     => $routeLegs,
             'distance_km'    => round($totalDistanceKm, 2),
             'billed_km'      => round($billedKm, 2),
             'price_per_km'   => $pricePerKm,
+            'effective_price_per_km' => $effectivePricePerKm,
+            'trip_multiplier' => $tripMultiplier,
             'driving_cost'   => $drivingCost,
             'stay_cost'      => $stayPrice,
             'total_cost'     => $totalCost,
@@ -172,5 +179,53 @@ class EstimateController extends Controller
             'lng'       => $result['geometry']['location']['lng'],
             'formatted' => $result['formatted_address'],
         ];
+    }
+
+    private function isHillCountry(array $location): bool
+    {
+        $formatted = strtolower((string) ($location['formatted'] ?? ''));
+
+        $keywords = [
+            'nuwara eliya',
+            'badulla',
+            'bandarawela',
+            'ella',
+            'haputale',
+            'kandy',
+            'matale',
+            'maskeliya',
+            'hatton',
+            'diyatalawa',
+            'talawakele',
+            'koslanda',
+            'gampola',
+        ];
+
+        foreach ($keywords as $keyword) {
+            if (str_contains($formatted, $keyword)) {
+                return true;
+            }
+        }
+
+        $lat = (float) ($location['lat'] ?? 0);
+        $lng = (float) ($location['lng'] ?? 0);
+        return $lat >= 6.5 && $lat <= 8.8 && $lng >= 79.5 && $lng <= 81.8;
+    }
+
+    private function resolvePricePerKm(Vehicle $vehicle, bool $isAc, bool $isRoundTrip, bool $isHillCountry): float
+    {
+        $prices = $vehicle->per_km_prices ?? [];
+        $group = $isAc ? ($prices['ac'] ?? []) : ($prices['nonAc'] ?? []);
+        $trip = $isRoundTrip ? ($group['roundTrip'] ?? []) : ($group['oneWay'] ?? []);
+        $field = $isHillCountry ? 'hill' : 'normal';
+        $rate = (float) ($trip[$field] ?? 0);
+
+        if ($rate > 0) {
+            return $rate;
+        }
+
+        return $isAc
+            ? ($isHillCountry ? (float) $vehicle->ac_hill_price_per_km : (float) $vehicle->ac_price_per_km)
+            : ($isHillCountry ? (float) $vehicle->non_ac_hill_price_per_km : (float) $vehicle->non_ac_price_per_km);
     }
 }
