@@ -32,6 +32,7 @@ Route::post('/quick-booking', [QuickBookingController::class, 'store']);
 Route::post('/bookings', [BookingController::class, 'store']);
 Route::get('/vehicles', [VehicleController::class, 'index']);
 Route::get('/lorries', [LorryController::class, 'index']);
+Route::post('/lorry-estimate', [LorryController::class, 'estimate']);
 Route::get('/vehicle-categories', [VehicleController::class, 'categories']);
 Route::post('/vehicle-categories', [VehicleController::class, 'storeCategory']);
 Route::post('/vehicles/image', [VehicleController::class, 'uploadImage']);

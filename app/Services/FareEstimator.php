@@ -102,7 +102,8 @@ class FareEstimator
         $lat = (float) ($location['lat'] ?? 0);
         $lng = (float) ($location['lng'] ?? 0);
 
-        return $lat >= 6.5 && $lat <= 8.8 && $lng >= 79.5 && $lng <= 81.8;
+        // Central highlands bounding box only
+        return $lat >= 6.7 && $lat <= 7.4 && $lng >= 80.4 && $lng <= 81.2;
     }
 
     private function resolvePricePerKm(Vehicle $vehicle, bool $isAc, bool $isRoundTrip, bool $isHillCountry): float

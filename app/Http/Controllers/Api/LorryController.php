@@ -4,10 +4,162 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Lorry;
+use App\Services\LorryEstimator;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Validation\Rule;
 
 class LorryController extends Controller
 {
+    public function __construct(private LorryEstimator $estimator) {}
+
+    public function estimate(Request $request)
+    {
+        $request->validate([
+            'lorry_id'       => ['required', 'integer', 'exists:lorries,id'],
+            'rate_type'      => ['required', 'string'],
+            'pickup_text'    => ['sometimes', 'string', 'max:200'],
+            'pickup_lat'     => ['sometimes', 'numeric'],
+            'pickup_lng'     => ['sometimes', 'numeric'],
+            'dropoff_text'   => ['sometimes', 'string', 'max:200'],
+            'dropoff_lat'    => ['sometimes', 'numeric'],
+            'dropoff_lng'    => ['sometimes', 'numeric'],
+            'distance_km'    => ['sometimes', 'numeric', 'min:0'],
+            'trip'           => ['sometimes', Rule::in(['one-way', 'round-trip'])],
+            'waiting_hours'  => ['sometimes', 'numeric', 'min:0'],
+        ]);
+
+        $lorry = Lorry::findOrFail($request->input('lorry_id'));
+        $rateTable = $lorry->rate_table ?? [];
+        $rateType  = $request->input('rate_type');
+
+        if (!isset($rateTable[$rateType])) {
+            return response()->json([
+                'success' => false,
+                'message' => "Rate type '{$rateType}' not found for this lorry. Available: " . implode(', ', array_keys($rateTable)),
+            ], 422);
+        }
+
+        $rate = $rateTable[$rateType];
+
+        // Resolve distance
+        if ($request->filled('distance_km')) {
+            $distanceKm = (float) $request->input('distance_km');
+            $durationText = null;
+        } else {
+            $pickup  = $this->resolveLocation($request, 'pickup');
+            $dropoff = $this->resolveLocation($request, 'dropoff');
+
+            if (!$pickup || !$dropoff) {
+                return response()->json(['success' => false, 'message' => 'Could not resolve pickup or dropoff location.'], 422);
+            }
+
+            $distResult = $this->fetchDistance($pickup, $dropoff);
+            if (!$distResult) {
+                return response()->json(['success' => false, 'message' => 'Could not calculate driving distance.'], 422);
+            }
+
+            $distanceKm   = $distResult['km'];
+            $durationText = $distResult['duration'];
+        }
+
+        $isHillCountry = $this->checkHillCountry(
+            $request->input('pickup_text', ''),
+            (float) $request->input('pickup_lat', 0),
+            (float) $request->input('pickup_lng', 0),
+            $request->input('dropoff_text', ''),
+            (float) $request->input('dropoff_lat', 0),
+            (float) $request->input('dropoff_lng', 0)
+        );
+
+        $fare = $this->estimator->estimate(
+            $rate,
+            $distanceKm,
+            $request->input('trip', 'one-way'),
+            $isHillCountry,
+            (float) $request->input('waiting_hours', 0)
+        );
+
+        return response()->json(array_merge([
+            'success'       => true,
+            'lorry'         => $lorry->name,
+            'rate_type'     => $rateType,
+            'duration'      => $durationText,
+        ], $fare));
+    }
+
+    private function resolveLocation(Request $request, string $type): ?array
+    {
+        $lat = $request->input("{$type}_lat");
+        $lng = $request->input("{$type}_lng");
+
+        if ($lat && $lng) {
+            return ['lat' => (float) $lat, 'lng' => (float) $lng];
+        }
+
+        $text = $request->input("{$type}_text");
+        if (!$text) return null;
+
+        $response = Http::withoutVerifying()->get('https://maps.googleapis.com/maps/api/geocode/json', [
+            'address' => $text,
+            'key'     => config('services.google.maps_key'),
+        ]);
+
+        $result = $response->json('results.0');
+        if (!$result) return null;
+
+        return [
+            'lat' => $result['geometry']['location']['lat'],
+            'lng' => $result['geometry']['location']['lng'],
+        ];
+    }
+
+    private function fetchDistance(array $origin, array $dest): ?array
+    {
+        $response = Http::withoutVerifying()->get('https://maps.googleapis.com/maps/api/distancematrix/json', [
+            'origins'      => $origin['lat'] . ',' . $origin['lng'],
+            'destinations' => $dest['lat'] . ',' . $dest['lng'],
+            'mode'         => 'driving',
+            'units'        => 'metric',
+            'key'          => config('services.google.maps_key'),
+        ]);
+
+        $element = $response->json('rows.0.elements.0');
+        if (($element['status'] ?? '') !== 'OK') return null;
+
+        return [
+            'km'       => $element['distance']['value'] / 1000,
+            'duration' => $element['duration']['text'],
+        ];
+    }
+
+    private function checkHillCountry(
+        string $pickupText, float $pickupLat, float $pickupLng,
+        string $dropoffText, float $dropoffLat, float $dropoffLng
+    ): bool {
+        $keywords = [
+            'nuwara eliya','badulla','bandarawela','ella','haputale',
+            'kandy','matale','maskeliya','hatton','diyatalawa',
+            'talawakele','koslanda','gampola',
+        ];
+
+        foreach ([$pickupText, $dropoffText] as $text) {
+            $lower = strtolower($text);
+            foreach ($keywords as $kw) {
+                if (str_contains($lower, $kw)) return true;
+            }
+        }
+
+        // Central highlands bounding box
+        foreach ([[$pickupLat, $pickupLng], [$dropoffLat, $dropoffLng]] as [$lat, $lng]) {
+            if ($lat && $lng && $lat >= 6.7 && $lat <= 7.4 && $lng >= 80.4 && $lng <= 81.2) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public function index()
     {
         return response()->json([
