@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Models\Booking;
 use App\Models\Vehicle;
 use App\Http\Controllers\Controller;
+use App\Services\FareEstimator;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
@@ -13,6 +14,10 @@ use Illuminate\Validation\Rule;
 class ChatbotController extends Controller
 {
     private const TTL = 1800;
+
+    public function __construct(private FareEstimator $fareEstimator)
+    {
+    }
 
     public function message(Request $request)
     {
@@ -60,6 +65,7 @@ class ChatbotController extends Controller
             'vehicle' => ['sometimes', 'string', 'max:100'],
             'ac' => ['sometimes', Rule::in(['ac', 'non-ac'])],
             'days' => ['sometimes', 'integer', 'min:1', 'max:5'],
+            'trip' => ['sometimes', Rule::in(['one-way', 'round-trip'])],
         ]);
 
         $pickup = $this->resolveLocation($request->only(['pickup_text', 'pickup_lat', 'pickup_lng']), 'pickup');
@@ -101,7 +107,7 @@ class ChatbotController extends Controller
         $ac = $request->input('ac', 'ac');
 
         $trip = $request->input('trip', 'one-way');
-        $fare = $this->calculateFare($vehicle, $distanceResult['km'], $days, $ac, $trip);
+        $fare = $this->fareEstimator->estimate($vehicle, $distanceResult['km'], (int) $days, $ac, $trip, $pickup, $dropoff);
 
         return response()->json([
             'success' => true,
@@ -114,6 +120,17 @@ class ChatbotController extends Controller
             'price_per_km' => $fare['price_per_km'],
             'effective_price_per_km' => $fare['effective_price_per_km'],
             'trip_multiplier' => $fare['trip_multiplier'],
+            'included_km' => $fare['included_km'],
+            'additional_km' => $fare['additional_km'],
+            'billable_km' => $fare['billable_km'],
+            'included_distance_charge' => $fare['included_distance_charge'],
+            'additional_distance_charge' => $fare['additional_distance_charge'],
+            'base_package_charge' => $fare['base_package_charge'],
+            'package1_estimate' => $fare['package1_estimate'],
+            'package2_estimate' => $fare['package2_estimate'],
+            'pickup_is_hill_country' => $fare['pickup_is_hill_country'],
+            'drop_is_hill_country' => $fare['drop_is_hill_country'],
+            'hill_country_rate' => $fare['is_hill_country'],
             'driving_cost' => $fare['driving_cost'],
             'stay_cost' => $fare['stay_cost'],
             'total_cost' => $fare['total_cost'],
@@ -240,12 +257,23 @@ class ChatbotController extends Controller
                 $data['duration_text'] = $distanceResult['duration'];
 
                 $vehicle = Vehicle::find($data['chosen_vehicle_id']);
-                $fare    = $this->calculateFare($vehicle, $data['distance_km'], $data['days'], $data['ac'], $data['trip'] ?? 'one-way');
+                $fare    = $this->fareEstimator->estimate(
+                    $vehicle,
+                    $data['distance_km'],
+                    (int) $data['days'],
+                    $data['ac'],
+                    $data['trip'] ?? 'one-way',
+                    ['formatted' => $data['pickup'], 'lat' => $data['pickup_lat'], 'lng' => $data['pickup_lng']],
+                    ['formatted' => $data['destination'], 'lat' => $data['destination_lat'], 'lng' => $data['destination_lng']]
+                );
 
                 $data['chosen_ac']    = $fare['ac_label'];
                 $data['chosen_cost']  = $fare['total_cost'];
                 $data['driving_cost'] = $fare['driving_cost'];
                 $data['stay_cost']    = $fare['stay_cost'];
+                $data['price_per_km'] = $fare['price_per_km'];
+                $data['effective_price_per_km'] = $fare['effective_price_per_km'];
+                $data['trip_multiplier'] = $fare['trip_multiplier'];
 
                 $summary = implode("\n", [
                     "Here's your booking summary:",
@@ -308,29 +336,6 @@ class ChatbotController extends Controller
             'ac_available'     => $v->ac_available,
             'non_ac_available' => $v->non_ac_available,
         ])->values()->toArray();
-    }
-
-    private function calculateFare(Vehicle $vehicle, float $distanceKm, int $days, string $acPref, string $trip = 'one-way'): array
-    {
-        $useAc = in_array($acPref, ['ac', 'both']) && $vehicle->ac_available;
-        if ($acPref === 'non-ac' && $vehicle->non_ac_available) $useAc = false;
-        $tripMultiplier = $trip === 'round-trip' ? 2 : 1;
-
-        $pricePerKm  = $useAc ? (float) $vehicle->ac_price_per_km : (float) $vehicle->non_ac_price_per_km;
-        $stayField   = 'stay_price_day' . $days;
-        $stayPrice   = (float) ($vehicle->$stayField ?? 0);
-        $effectivePricePerKm = round($pricePerKm * $tripMultiplier, 2);
-        $drivingCost = round($distanceKm * $effectivePricePerKm, 2);
-
-        return [
-            'ac_label'    => $useAc ? 'AC' : 'Non-AC',
-            'price_per_km'=> $pricePerKm,
-            'effective_price_per_km' => $effectivePricePerKm,
-            'trip_multiplier' => $tripMultiplier,
-            'driving_cost'=> $drivingCost,
-            'stay_cost'   => $stayPrice,
-            'total_cost'  => round($drivingCost + $stayPrice, 2),
-        ];
     }
 
     private function geocode(string $address): ?array
@@ -426,6 +431,12 @@ class ChatbotController extends Controller
             'ac'              => $data['ac'],
             'distance_km'     => $data['distance_km'],
             'distance_source' => 'route',
+            'price_per_km'    => $data['price_per_km'] ?? null,
+            'effective_price_per_km' => $data['effective_price_per_km'] ?? null,
+            'trip_multiplier' => $data['trip_multiplier'] ?? 1,
+            'driving_cost'    => $data['driving_cost'] ?? null,
+            'stay_cost'       => $data['stay_cost'] ?? 0,
+            'total_cost'      => $data['chosen_cost'] ?? null,
             'status'          => 'new',
         ]);
     }

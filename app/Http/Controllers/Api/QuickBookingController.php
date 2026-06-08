@@ -5,12 +5,17 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Booking;
 use App\Models\Vehicle;
+use App\Services\FareEstimator;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Validation\Rule;
 
 class QuickBookingController extends Controller
 {
+    public function __construct(private FareEstimator $fareEstimator)
+    {
+    }
+
     public function store(Request $request)
     {
         $request->validate([
@@ -74,16 +79,16 @@ class QuickBookingController extends Controller
             return response()->json(['message' => 'Could not calculate driving distance for this route.'], 422);
         }
 
-        $isRoundTrip = $request->input('trip') === 'round-trip';
-        $tripMultiplier = $isRoundTrip ? 2 : 1;
-        $billedKm    = $totalDistanceKm;
         $days        = (int) $request->input('days');
-        $pricePerKm  = $isAc ? (float) $vehicle->ac_price_per_km : (float) $vehicle->non_ac_price_per_km;
-        $stayField   = 'stay_price_day' . $days;
-        $stayPrice   = (float) ($vehicle->$stayField ?? 0);
-        $effectivePricePerKm = round($pricePerKm * $tripMultiplier, 2);
-        $drivingCost = round($billedKm * $effectivePricePerKm, 2);
-        $totalCost   = round($drivingCost + $stayPrice, 2);
+        $fare = $this->fareEstimator->estimate(
+            $vehicle,
+            $totalDistanceKm,
+            $days,
+            $request->input('ac'),
+            $request->input('trip'),
+            $pickupCoords,
+            $dropCoords
+        );
 
         $booking = Booking::create([
             'vehicle'         => $vehicle->name,
@@ -105,12 +110,10 @@ class QuickBookingController extends Controller
             'ac'              => $request->input('ac'),
             'distance_km'     => round($totalDistanceKm, 2),
             'distance_source' => 'route',
-            'price_per_km'    => $pricePerKm,
-            'effective_price_per_km' => $effectivePricePerKm,
-            'trip_multiplier' => $tripMultiplier,
-            'driving_cost'    => $drivingCost,
-            'stay_cost'       => $stayPrice,
-            'total_cost'      => $totalCost,
+            'price_per_km'    => $fare['price_per_km'],
+            'driving_cost'    => $fare['driving_cost'],
+            'stay_cost'       => $fare['stay_cost'],
+            'total_cost'      => $fare['total_cost'],
             'status'          => 'new',
             'customer_name'   => $request->input('customer_name'),
             'customer_phone'  => $request->input('customer_phone'),
@@ -129,8 +132,15 @@ class QuickBookingController extends Controller
             'pax'            => $booking->passengers,
             'ac'             => $booking->ac,
             'distance_km'    => (float) $booking->distance_km,
-            'billed_km'      => round($billedKm, 2),
+            'billed_km'      => $fare['billable_km'],
             'price_per_km'   => (float) $booking->price_per_km,
+            'effective_price_per_km' => $fare['effective_price_per_km'],
+            'trip_multiplier' => $fare['trip_multiplier'],
+            'included_km'    => $fare['included_km'],
+            'additional_km'  => $fare['additional_km'],
+            'package1_estimate' => $fare['package1_estimate'],
+            'package2_estimate' => $fare['package2_estimate'],
+            'hill_country_rate' => $fare['is_hill_country'],
             'driving_cost'   => (float) $booking->driving_cost,
             'stay_cost'      => (float) $booking->stay_cost,
             'total_cost'     => (float) $booking->total_cost,

@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\ChatbotController;
 use App\Http\Controllers\Api\EstimateController;
 use App\Http\Controllers\Api\PlaceController;
 use App\Http\Controllers\Api\QuickBookingController;
+use App\Http\Controllers\Api\LorryController;
 use App\Http\Controllers\Api\VehicleController;
 
 /*
@@ -30,12 +31,17 @@ Route::post('/chatbot/booking', [QuickBookingController::class, 'store']);
 Route::post('/quick-booking', [QuickBookingController::class, 'store']);
 Route::post('/bookings', [BookingController::class, 'store']);
 Route::get('/vehicles', [VehicleController::class, 'index']);
+Route::get('/lorries', [LorryController::class, 'index']);
 Route::get('/vehicle-categories', [VehicleController::class, 'categories']);
 Route::post('/vehicle-categories', [VehicleController::class, 'storeCategory']);
 Route::post('/vehicles/image', [VehicleController::class, 'uploadImage']);
 Route::post('/vehicles', [VehicleController::class, 'store']);
 Route::put('/vehicles/{vehicle}', [VehicleController::class, 'update']);
 Route::delete('/vehicles/{vehicle}', [VehicleController::class, 'destroy']);
+Route::post('/lorries', [LorryController::class, 'store']);
+Route::get('/lorries/{lorry}', [LorryController::class, 'show']);
+Route::put('/lorries/{lorry}', [LorryController::class, 'update']);
+Route::delete('/lorries/{lorry}', [LorryController::class, 'destroy']);
 
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/admin/logout', [AdminAuthController::class, 'logout']);
