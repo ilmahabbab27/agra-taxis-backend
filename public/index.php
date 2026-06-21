@@ -36,7 +36,7 @@ if (file_exists($maintenance = __DIR__.'/storage/framework/maintenance.php')) {
 |
 */
 
-require __DIR__.'/vendor/autoload.php';
+require __DIR__.'/../vendor/autoload.php';
 
 /*
 |--------------------------------------------------------------------------
@@ -49,12 +49,28 @@ require __DIR__.'/vendor/autoload.php';
 |
 */
 
-$app = require_once __DIR__.'/bootstrap/app.php';
+$app = require_once __DIR__.'/../bootstrap/app.php';
 
 $kernel = $app->make(Kernel::class);
 
-$response = $kernel->handle(
-    $request = Request::capture()
-)->send();
+// Fix the REQUEST_URI to remove the base path
+$basePaths = [
+    '/Agra Taxis Backend/public',
+    '/Agra%20Taxis%20Backend/public',
+];
+
+foreach ($basePaths as $basePath) {
+    if (strpos($_SERVER['REQUEST_URI'], $basePath) === 0) {
+        $_SERVER['REQUEST_URI'] = substr($_SERVER['REQUEST_URI'], strlen($basePath));
+        break;
+    }
+}
+
+if (empty($_SERVER['REQUEST_URI'])) {
+    $_SERVER['REQUEST_URI'] = '/';
+}
+
+$request = Request::capture();
+$response = $kernel->handle($request)->send();
 
 $kernel->terminate($request, $response);

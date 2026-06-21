@@ -5,97 +5,98 @@ namespace App\Services;
 class LorryEstimator
 {
     /**
-     * Rate table row shape:
-     *   start            – base fare (covers up to dropMaxKm for one-way drop)
-     *   extra            – per-km charge beyond dropMaxKm
-     *   between100And130 – flat fare when distance is between 100–130 km
-     *   upDown           – flat round-trip (up-and-down) fare (up to maxUpDownKm)
-     *   waiting          – flat waiting charge (per occurrence / half-day)
-     *   waitingHour      – per-hour waiting charge
-     *   hillExtraPerKm   – surcharge per km for hill-country routes
-     *   dropMinKm        – minimum km threshold for the base drop fare
-     *   dropMaxKm        – km ceiling covered by the base start fare
-     *   maxUpDownKm      – km ceiling covered by the flat upDown fare
+     * Rate table row shape (windows-based):
+     *   type                   – lorry type name (e.g., "7 FT")
+     *   windows               – array of km range windows with rate, extraPerKm
+     *   extraUpDownCharge     – flat round-trip surcharge
+     *   waitingChargePerHour  – hourly waiting charge
+     *
+     * Each window:
+     *   fromKm                – start km for this window
+     *   toKm                  – end km (null = open-ended)
+     *   rate                  – base rate for this window
+     *   extraPerKm            – per-km charge beyond toKm
+     *   hillExtraPerKm        – hill country surcharge per km
      */
     public function estimate(array $rate, float $distanceKm, string $trip, bool $isHillCountry, float $waitingHours = 0): array
     {
-        $isRoundTrip   = in_array(strtolower($trip), ['round-trip', 'round trip'], true);
-        $dropMinKm     = (float) ($rate['dropMinKm']     ?? 0);
-        $dropMaxKm     = (float) ($rate['dropMaxKm']     ?? 130);
-        $maxUpDownKm   = (float) ($rate['maxUpDownKm']   ?? 150);
-        $start         = (float) ($rate['start']         ?? 0);
-        $extra         = (float) ($rate['extra']         ?? 0);
-        $upDown        = (float) ($rate['upDown']        ?? 0);
-        $between       = (float) ($rate['between100And130'] ?? 0);
-        $waitingFlat   = (float) ($rate['waiting']       ?? 0);
-        $waitingHourly = (float) ($rate['waitingHour']   ?? 0);
-        $hillExtra     = (float) ($rate['hillExtraPerKm'] ?? 0);
+        $isRoundTrip = in_array(strtolower($trip), ['round-trip', 'round trip'], true);
 
-        // ── Base fare ─────────────────────────────────────────────────────────
-        $startCharge = 0.0;
-        $extraKm     = 0.0;
-        $extraCharge = 0.0;
+        // Step 1: Find base fee and determine extra km
+        $baseFee = 0.0;
+        $extraKm = 0.0;
+        $extraPerKm = 0.0;
+        $hillExtraPerKm = 0.0;
 
-        if ($isRoundTrip) {
-            if ($distanceKm <= $maxUpDownKm && $upDown > 0) {
-                $startCharge = $upDown;
-            } else {
-                $startCharge = $upDown ?: $start;
-                if ($distanceKm > $maxUpDownKm && $extra > 0) {
-                    $extraKm     = round($distanceKm - $maxUpDownKm, 2);
-                    $extraCharge = round($extraKm * $extra, 2);
-                }
-            }
-        } else {
-            if ($between > 0 && $distanceKm >= 100 && $distanceKm <= 130) {
-                $startCharge = $between;
-            } elseif ($distanceKm <= max($dropMaxKm, $dropMinKm)) {
-                $startCharge = $start;
-            } else {
-                $startCharge = $start;
-                if ($extra > 0) {
-                    $extraKm     = round($distanceKm - $dropMaxKm, 2);
-                    $extraCharge = round($extraKm * $extra, 2);
+        if (isset($rate['windows']) && is_array($rate['windows'])) {
+            $windows = $rate['windows'];
+            foreach ($windows as $window) {
+                $fromKm = (float) ($window['fromKm'] ?? 0);
+                $toKm = isset($window['toKm']) ? (float) $window['toKm'] : null;
+
+                if ($distanceKm >= $fromKm) {
+                    if ($toKm === null || $distanceKm <= $toKm) {
+                        $baseFee = (float) ($window['rate'] ?? 0);
+                        break;
+                    } else {
+                        $baseFee = (float) ($window['rate'] ?? 0);
+                        $extraKm = $distanceKm - $toKm;
+                        $extraPerKm = (float) ($window['extraPerKm'] ?? 0);
+                        $hillExtraPerKm = (float) ($window['hillExtraPerKm'] ?? 0);
+                    }
                 }
             }
         }
 
-        $baseFare = $startCharge + $extraCharge;
+        // Step 2: Calculate extra KM fee based on trip type and location
+        // Formula:
+        //   Round Trip + Hill: extraKm × upDownHill
+        //   Round Trip + Non-Hill: extraKm × upDownNonHill
+        //   One-Way + Hill: extraKm × (extraPerKm + hillExtraPerKm)
+        //   One-Way + Non-Hill: extraKm × extraPerKm
+        $extraFee = 0.0;
+        if ($extraKm > 0) {
+            if ($isRoundTrip) {
+                if ($isHillCountry) {
+                    $extraFee = round($extraKm * (float) ($rate['upDownHill'] ?? 0), 2);
+                } else {
+                    $extraFee = round($extraKm * (float) ($rate['upDownNonHill'] ?? 0), 2);
+                }
+            } else {
+                if ($isHillCountry) {
+                    $extraFee = round($extraKm * ($extraPerKm + $hillExtraPerKm), 2);
+                } else {
+                    $extraFee = round($extraKm * $extraPerKm, 2);
+                }
+            }
+        }
 
-        // ── Hill-country surcharge ────────────────────────────────────────────
-        $hillCharge = $isHillCountry && $hillExtra > 0 ? round($distanceKm * $hillExtra, 2) : 0.0;
-
-        // ── Waiting charge ────────────────────────────────────────────────────
+        // Step 3: Calculate waiting charge (informational, NOT added to total)
+        $freeWaitingHours = (float) ($rate['freeWaitingHours'] ?? 0);
+        $waitingChargePerHour = (float) ($rate['waitingChargePerHour'] ?? 0);
+        $chargeableWaitingHours = 0.0;
         $waitingCharge = 0.0;
-        if ($waitingHours > 0) {
-            $waitingCharge = $waitingHourly > 0
-                ? round($waitingHours * $waitingHourly, 2)
-                : $waitingFlat;
+
+        if ($waitingHours > $freeWaitingHours && $waitingChargePerHour > 0) {
+            $chargeableWaitingHours = $waitingHours - $freeWaitingHours;
+            $waitingCharge = round($chargeableWaitingHours * $waitingChargePerHour, 2);
         }
 
-        $totalFare = round($startCharge + $extraCharge + $hillCharge + $waitingCharge, 2);
+        // Total = Base Fee + Extra Fee (waiting charge NOT included)
+        $totalFare = round($baseFee + $extraFee, 2);
 
         return [
-            'trip'            => $isRoundTrip ? 'round-trip' : 'one-way',
-            'distance_km'     => round($distanceKm, 2),
-            'is_hill_country' => $isHillCountry,
-            'start_charge'    => round($startCharge, 2),
-            'extra_km'        => $extraKm,
-            'extra_charge'    => $extraCharge,
-            'base_fare'       => round($baseFare, 2),
-            'hill_charge'     => $hillCharge,
-            'waiting_charge'  => round($waitingCharge, 2),
-            'total_cost'      => $totalFare,
-            'rate_applied'    => [
-                'start'            => $start,
-                'extra'            => $extra,
-                'upDown'           => $upDown,
-                'between100And130' => $between,
-                'hillExtraPerKm'   => $hillExtra,
-                'dropMinKm'        => $dropMinKm,
-                'dropMaxKm'        => $dropMaxKm,
-                'maxUpDownKm'      => $maxUpDownKm,
-            ],
+            'trip'                      => $isRoundTrip ? 'round-trip' : 'one-way',
+            'distance_km'               => round($distanceKm, 2),
+            'is_hill_country'           => $isHillCountry,
+            'base_fee'                  => round($baseFee, 2),
+            'extra_km'                  => round($extraKm, 2),
+            'extra_fee'                 => $extraFee,
+            'waiting_hours'             => round($waitingHours, 2),
+            'free_waiting_hours'        => $freeWaitingHours,
+            'chargeable_waiting_hours'  => round($chargeableWaitingHours, 2),
+            'waiting_charge'            => $waitingCharge,
+            'total_cost'                => $totalFare,
         ];
     }
 }

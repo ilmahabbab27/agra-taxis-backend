@@ -30,17 +30,33 @@ class LorryController extends Controller
         ]);
 
         $lorry = Lorry::findOrFail($request->input('lorry_id'));
-        $rateTable = $lorry->rate_table ?? [];
-        $rateType  = $request->input('rate_type');
 
+        // Get rates from DATABASE (not hardcoded)
+        $rateTable = $lorry->rate_table;
+        if (!is_array($rateTable) || empty($rateTable)) {
+            return response()->json([
+                'success' => false,
+                'message' => "No rate table configured for lorry '{$lorry->name}'. Please configure rates in admin panel.",
+            ], 422);
+        }
+
+        $rateType = $request->input('rate_type');
         if (!isset($rateTable[$rateType])) {
             return response()->json([
                 'success' => false,
-                'message' => "Rate type '{$rateType}' not found for this lorry. Available: " . implode(', ', array_keys($rateTable)),
+                'message' => "Rate type '{$rateType}' not found for {$lorry->name}. Available: " . implode(', ', array_keys($rateTable)),
             ], 422);
         }
 
         $rate = $rateTable[$rateType];
+
+        // Validate rate structure
+        if (!isset($rate['windows']) || !is_array($rate['windows']) || empty($rate['windows'])) {
+            return response()->json([
+                'success' => false,
+                'message' => "Invalid rate configuration for {$lorry->name} - {$rateType}. Windows not found.",
+            ], 422);
+        }
 
         // Resolve distance
         if ($request->filled('distance_km')) {
@@ -208,6 +224,9 @@ class LorryController extends Controller
             'img3' => ['nullable', 'string'],
             'img4' => ['nullable', 'string'],
             'img5' => ['nullable', 'string'],
+            'seats' => ['nullable', 'integer', 'min:1'],
+            'acAvailable' => ['nullable', 'boolean'],
+            'nonAcAvailable' => ['nullable', 'boolean'],
             'rateTable' => ['nullable', 'array'],
         ]);
     }
@@ -222,6 +241,9 @@ class LorryController extends Controller
             'img3' => $data['img3'] ?? null,
             'img4' => $data['img4'] ?? null,
             'img5' => $data['img5'] ?? null,
+            'seats' => max(1, (int) ($data['seats'] ?? 1)),
+            'ac_available' => (bool) ($data['acAvailable'] ?? false),
+            'non_ac_available' => (bool) ($data['nonAcAvailable'] ?? false),
             'rate_table' => $this->normalizeRateTable($data['rateTable'] ?? []),
         ];
     }
@@ -237,8 +259,11 @@ class LorryController extends Controller
             'img3' => $lorry->img3,
             'img4' => $lorry->img4,
             'img5' => $lorry->img5,
+            'seats' => $lorry->seats ?? 1,
+            'acAvailable' => (bool) ($lorry->ac_available ?? false),
+            'nonAcAvailable' => (bool) ($lorry->non_ac_available ?? false),
             'images' => array_values(array_filter([$lorry->img, $lorry->img2, $lorry->img3, $lorry->img4, $lorry->img5])),
-            'rateTable' => $this->normalizeRateTable($lorry->rate_table ?? []),
+            'lorryRates' => $this->normalizeRateTable($lorry->rate_table ?? []),
         ];
     }
 
@@ -249,18 +274,41 @@ class LorryController extends Controller
             if (!is_array($row)) {
                 continue;
             }
+
+            $windows = [];
+            if (isset($row['windows']) && is_array($row['windows'])) {
+                foreach ($row['windows'] as $window) {
+                    if (is_array($window)) {
+                        $windows[] = [
+                            'fromKm' => max(0, (int) ($window['fromKm'] ?? 0)),
+                            'toKm' => isset($window['toKm']) ? ((int) $window['toKm']) : null,
+                            'rate' => max(0, (float) ($window['rate'] ?? 0)),
+                            'extraPerKm' => max(0, (float) ($window['extraPerKm'] ?? 0)),
+                            'hillExtraPerKm' => max(0, (float) ($window['hillExtraPerKm'] ?? 0)),
+                        ];
+                    }
+                }
+            }
+
+            if (empty($windows)) {
+                $windows = [
+                    [
+                        'fromKm' => 0,
+                        'toKm' => 130,
+                        'rate' => max(0, (float) ($row['rate'] ?? $row['start'] ?? 0)),
+                        'extraPerKm' => max(0, (float) ($row['extraPerKm'] ?? $row['extra'] ?? 0)),
+                        'hillExtraPerKm' => max(0, (float) ($row['hillExtraPerKm'] ?? 0)),
+                    ]
+                ];
+            }
+
             $normalized[$key] = [
                 'type' => trim((string) ($row['type'] ?? $key)),
-                'start' => max(0, (float) ($row['start'] ?? 0)),
-                'extra' => max(0, (float) ($row['extra'] ?? 0)),
-                'upDown' => max(0, (float) ($row['upDown'] ?? $row['up_down'] ?? 0)),
-                'waiting' => max(0, (float) ($row['waiting'] ?? 0)),
-                'waitingHour' => max(0, (float) ($row['waitingHour'] ?? $row['waiting_hour'] ?? 0)),
-                'between100And130' => max(0, (float) ($row['between100And130'] ?? $row['between_100_130'] ?? 0)),
-                'hillExtraPerKm' => max(0, (float) ($row['hillExtraPerKm'] ?? $row['hill_extra_per_km'] ?? 10)),
-                'dropMinKm' => max(0, (float) ($row['dropMinKm'] ?? $row['drop_min_km'] ?? 10)),
-                'dropMaxKm' => max(0, (float) ($row['dropMaxKm'] ?? $row['drop_max_km'] ?? 130)),
-                'maxUpDownKm' => max(0, (float) ($row['maxUpDownKm'] ?? $row['max_up_down_km'] ?? 150)),
+                'windows' => $windows,
+                'upDownNonHill' => max(0, (float) ($row['upDownNonHill'] ?? $row['upDown'] ?? $row['up_down'] ?? 0)),
+                'upDownHill' => max(0, (float) ($row['upDownHill'] ?? $row['upDownHill'] ?? 0)),
+                'freeWaitingHours' => max(0, (float) ($row['freeWaitingHours'] ?? 0)),
+                'waitingChargePerHour' => max(0, (float) ($row['waitingChargePerHour'] ?? 0)),
             ];
         }
 

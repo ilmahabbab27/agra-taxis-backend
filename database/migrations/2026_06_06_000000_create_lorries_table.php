@@ -10,15 +10,19 @@ return new class extends Migration
     {
         Schema::create('lorries', function (Blueprint $table) {
             $table->id();
-            $table->string('name');
+            $table->string('name')->unique();
             $table->string('category')->default('Lorries');
             $table->string('img')->nullable();
             $table->string('img2')->nullable();
             $table->string('img3')->nullable();
             $table->string('img4')->nullable();
             $table->string('img5')->nullable();
-            $table->json('rate_table')->nullable();
+            $table->unsignedTinyInteger('seats')->default(1);
+            $table->boolean('ac_available')->default(false);
+            $table->boolean('non_ac_available')->default(false);
+            $table->json('rate_table')->nullable()->comment('Stores lorry rate windows, upDown charges, and waiting charges as JSON');
             $table->timestamps();
+            $table->index('category');
         });
     }
 

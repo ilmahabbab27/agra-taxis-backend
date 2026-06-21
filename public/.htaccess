@@ -15,7 +15,6 @@ RewriteRule ^ - [R=204,L]
     </IfModule>
 
     RewriteEngine On
-    RewriteBase /backend/
 
     # Handle Authorization Header
     RewriteCond %{HTTP:Authorization} .

@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\EstimateController;
 use App\Http\Controllers\Api\PlaceController;
 use App\Http\Controllers\Api\QuickBookingController;
 use App\Http\Controllers\Api\LorryController;
+use App\Http\Controllers\Api\LorryChatbotController;
 use App\Http\Controllers\Api\VehicleController;
 
 /*
@@ -22,11 +23,22 @@ use App\Http\Controllers\Api\VehicleController;
 |
 */
 
+Route::get('/debug', function (Request $request) {
+    return [
+        'path' => $request->getPathInfo(),
+        'url' => $request->getRequestUri(),
+        'method' => $request->getMethod(),
+        'request_uri' => $_SERVER['REQUEST_URI'] ?? null,
+        'script_name' => $_SERVER['SCRIPT_NAME'] ?? null,
+    ];
+});
+
 Route::post('/admin/login', [AdminAuthController::class, 'login']);
 Route::get('/places/predict', [PlaceController::class, 'predict']);
 Route::post('/estimate', [EstimateController::class, 'calculate']);
 Route::post('/chatbot/message', [ChatbotController::class, 'message']);
 Route::post('/chatbot/estimate', [ChatbotController::class, 'estimate']);
+Route::post('/lorry-chatbot/message', [LorryChatbotController::class, 'message']);
 Route::post('/chatbot/booking', [QuickBookingController::class, 'store']);
 Route::post('/quick-booking', [QuickBookingController::class, 'store']);
 Route::post('/bookings', [BookingController::class, 'store']);

@@ -17,6 +17,9 @@ class Lorry extends Model
         'img3',
         'img4',
         'img5',
+        'seats',
+        'ac_available',
+        'non_ac_available',
         'rate_table',
     ];
 
