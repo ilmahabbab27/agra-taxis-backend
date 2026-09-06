@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\AdminAuthController;
 use App\Http\Controllers\Api\BookingController;
 use App\Http\Controllers\Api\ChatbotController;
 use App\Http\Controllers\Api\EstimateController;
+use App\Http\Controllers\Api\FareEstimateController;
 use App\Http\Controllers\Api\PlaceController;
 use App\Http\Controllers\Api\QuickBookingController;
 use App\Http\Controllers\Api\LorryController;
@@ -36,6 +37,7 @@ Route::get('/debug', function (Request $request) {
 Route::post('/admin/login', [AdminAuthController::class, 'login']);
 Route::get('/places/predict', [PlaceController::class, 'predict']);
 Route::post('/estimate', [EstimateController::class, 'calculate']);
+Route::post('/fare-estimate', [FareEstimateController::class, 'calculate']);
 Route::post('/chatbot/message', [ChatbotController::class, 'message']);
 Route::post('/chatbot/estimate', [ChatbotController::class, 'estimate']);
 Route::post('/lorry-chatbot/message', [LorryChatbotController::class, 'message']);
