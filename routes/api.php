@@ -12,6 +12,7 @@ use App\Http\Controllers\Api\QuickBookingController;
 use App\Http\Controllers\Api\LorryController;
 use App\Http\Controllers\Api\LorryChatbotController;
 use App\Http\Controllers\Api\VehicleController;
+use App\Http\Controllers\Api\DriverController;
 
 /*
 |--------------------------------------------------------------------------
@@ -57,12 +58,28 @@ Route::post('/lorries', [LorryController::class, 'store']);
 Route::get('/lorries/{lorry}', [LorryController::class, 'show']);
 Route::put('/lorries/{lorry}', [LorryController::class, 'update']);
 Route::delete('/lorries/{lorry}', [LorryController::class, 'destroy']);
+Route::post('/driver-registrations', [DriverController::class, 'register']);
+Route::post('/driver-auth/login', [DriverController::class, 'login']);
+Route::post('/driver-auth/forgot-password', [DriverController::class, 'forgotPassword']);
+Route::post('/driver-auth/change-password', [DriverController::class, 'changePassword']);
 
 Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/driver-account', [DriverController::class, 'account']);
+    Route::post('/driver-account', [DriverController::class, 'updateAccount']);
+    Route::patch('/driver-account', [DriverController::class, 'updateAccount']);
+});
+
+Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/admin/logout', [AdminAuthController::class, 'logout']);
     Route::get('/bookings', [BookingController::class, 'index']);
     Route::patch('/bookings/{booking}/status', [BookingController::class, 'updateStatus']);
     Route::delete('/bookings/{booking}', [BookingController::class, 'destroy']);
+});
+
+Route::middleware(['auth:sanctum'])->group(function () {
+    Route::get('/admin/driver-registrations', [DriverController::class, 'index']);
+    Route::post('/admin/driver-registrations/{driver}', [DriverController::class, 'updateStatus']);
+    Route::patch('/admin/driver-registrations/{driver}', [DriverController::class, 'updateStatus']);
 });
 
 Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
