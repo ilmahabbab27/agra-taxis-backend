@@ -13,6 +13,7 @@ use App\Http\Controllers\Api\LorryController;
 use App\Http\Controllers\Api\LorryChatbotController;
 use App\Http\Controllers\Api\VehicleController;
 use App\Http\Controllers\Api\DriverController;
+use App\Http\Controllers\Api\DriverRideController;
 
 /*
 |--------------------------------------------------------------------------
@@ -80,6 +81,13 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/admin/driver-registrations', [DriverController::class, 'index']);
     Route::post('/admin/driver-registrations/{driver}', [DriverController::class, 'updateStatus']);
     Route::patch('/admin/driver-registrations/{driver}', [DriverController::class, 'updateStatus']);
+    Route::delete('/admin/driver-registrations/{driver}', [DriverController::class, 'destroy']);
+    Route::get('/admin/driver-rides', [DriverRideController::class, 'all']);
+    Route::get('/admin/drivers/{driverId}/rides', [DriverRideController::class, 'index']);
+    Route::post('/admin/drivers/{driverId}/rides', [DriverRideController::class, 'store']);
+    Route::post('/admin/drivers/{driverId}/rides/{ride}', [DriverRideController::class, 'update']);
+    Route::delete('/admin/drivers/{driverId}/rides/{ride}', [DriverRideController::class, 'destroy']);
+    Route::delete('/admin/driver-rides/{ride}', [DriverRideController::class, 'destroyAny']);
 });
 
 Route::middleware('auth:sanctum')->get('/user', function (Request $request) {

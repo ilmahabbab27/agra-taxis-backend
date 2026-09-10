@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class DriverController extends Controller
@@ -104,6 +105,12 @@ class DriverController extends Controller
         return response()->json(['message' => 'Account updated.', 'driver' => $driver->fresh()]);
     }
 
+    public function destroy(Driver $driver)
+    {
+        $driver->delete();
+        return response()->json(['message' => 'Driver deleted.']);
+    }
+
     public function forgotPassword(Request $request)
     {
         $data = $request->validate(['email' => ['required', 'email']]);
@@ -111,9 +118,14 @@ class DriverController extends Controller
         if ($driver) {
             $token = Str::random(64);
             DB::table('password_resets')->updateOrInsert(['email' => $driver->email], ['token' => Hash::make($token), 'created_at' => now()]);
-            Mail::raw("Use this token to change your Agra Taxis driver password: {$token}", function ($message) use ($driver) {
-                $message->to($driver->email)->subject('Agra Taxis driver password reset');
-            });
+            try {
+                Mail::raw("Use this token to change your Agra Taxis driver password: {$token}", function ($message) use ($driver) {
+                    $message->to($driver->email)->subject('Agra Taxis driver password reset');
+                });
+            } catch (\Throwable $exception) {
+                Log::error('Driver password reset email failed', ['email' => $driver->email, 'error' => $exception->getMessage()]);
+                return response()->json(['message' => 'Email could not be sent. Check the SMTP settings.'], 503);
+            }
         }
         return response()->json(['message' => 'If the email exists, a reset token has been sent.']);
     }
