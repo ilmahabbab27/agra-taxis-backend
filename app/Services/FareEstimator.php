@@ -63,6 +63,23 @@ class FareEstimator
         ];
     }
 
+    public function estimateExternal(Vehicle $vehicle, float $distanceKm, int $days, string $acPref, string $trip, bool $includeOperatingCosts = false): array
+    {
+        $fare = $this->estimate($vehicle, $distanceKm, $days, $acPref, $trip);
+        $vehicleCost = (float) $fare['total_cost'];
+
+        return array_merge($fare, [
+            'base_fare' => $vehicleCost,
+            'include_operating_costs' => $includeOperatingCosts,
+            'operating_cost' => 0.0,
+            'vehicle_cost' => $vehicleCost,
+            'driver_charge' => 0.0,
+            'fuel_cost' => 0.0,
+            'commission_rate' => 0.0,
+            'commission_amount' => 0.0,
+        ]);
+    }
+
     public function usesAc(Vehicle $vehicle, string $acPref): bool
     {
         $acPref = strtolower(trim($acPref));
