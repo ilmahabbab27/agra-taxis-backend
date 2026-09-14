@@ -17,7 +17,22 @@ class FareEstimateController extends Controller
 
     public function external(FareEstimateRequest $request)
     {
-        return $this->calculate($request);
+        $response = $this->calculate($request);
+        $payload = $response->getData(true);
+        $data = $payload['data'] ?? [];
+        $amount = round((float) ($data['total_cost'] ?? 0));
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Estimated trip fare calculated successfully.',
+            'data' => array_merge($data, [
+                'title' => 'Estimated trip fare',
+                'vehicle' => $data['vehicle_name'] ?? $data['lorry_name'] ?? null,
+                'amount' => $amount,
+                'currency' => 'LKR',
+                'note' => 'This is an estimate only. Final pricing may change based on route conditions, stops, waiting time, the actual trip duration, and the final per-km billing after the included allowance.',
+            ]),
+        ]);
     }
 
     public function calculate(FareEstimateRequest $request)

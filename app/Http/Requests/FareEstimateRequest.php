@@ -10,33 +10,49 @@ class FareEstimateRequest extends FormRequest
 {
     protected function prepareForValidation(): void
     {
-        if (!$this->isMethod('GET') || !$this->is('api/external/fare-estimate')) {
+        if (!$this->is('api/external/fare-estimate')) {
             return;
         }
 
-        $vehicleName = trim((string) $this->query('vehicle'));
+        $value = fn (string $key, mixed $default = null) => $this->isMethod('GET')
+            ? $this->query($key, $default)
+            : $this->input($key, $default);
+        $vehicleName = trim((string) $value('vehicle', $value('lorry')));
         $vehicle = Vehicle::whereRaw('LOWER(name) = ?', [strtolower($vehicleName)])->first();
         $vehicle ??= Vehicle::whereRaw('LOWER(name) LIKE ?', ['%' . strtolower($vehicleName) . '%'])->first();
+        $type = strtolower((string) $value('type'));
+        $pickup = $value('pickup');
+        $drop = $value('drop');
+        $pickupCoordinates = $this->coordinatePair($pickup);
+        $dropCoordinates = $this->coordinatePair($drop);
 
         $this->merge([
             'vehicle_id' => $vehicle?->id,
-            'service_type' => strtolower((string) $this->query('type')) === 'lorry' ? 'Lorry' : 'Passenger',
-            'pickup_lat' => $this->coordinate($this->query('pickup'), 0),
-            'pickup_lng' => $this->coordinate($this->query('pickup'), 1),
-            'destination_lat' => $this->coordinate($this->query('drop'), 0),
-            'destination_lng' => $this->coordinate($this->query('drop'), 1),
-            'trip' => strtolower((string) $this->query('trip')) === 'round-trip' ? 'Round Trip' : 'One Way',
-            'days' => $this->query('days', 1),
-            'pax' => $this->query('pax', 1),
-            'ac' => strtolower((string) $this->query('ac')) === 'non-ac' ? 'Non AC' : 'AC',
-            'rate_type' => $this->query('rate_type'),
+            'service_type' => $type === 'lorry' ? 'Lorry' : 'Passenger',
+            'pickup_lat' => $pickupCoordinates[0] ?? null,
+            'pickup_lng' => $pickupCoordinates[1] ?? null,
+            'pickup_text' => $pickupCoordinates ? null : $pickup,
+            'destination_lat' => $dropCoordinates[0] ?? null,
+            'destination_lng' => $dropCoordinates[1] ?? null,
+            'destination_text' => $dropCoordinates ? null : $drop,
+            'trip' => strtolower((string) $value('trip')) === 'round-trip' ? 'Round Trip' : 'One Way',
+            'days' => $value('days', 1),
+            'pax' => $value('pax', 1),
+            'ac' => strtolower((string) $value('ac')) === 'non-ac' ? 'Non AC' : 'AC',
+            'rate_type' => $value('rate_type'),
+            'distance_km' => $value('distance_km'),
+            'waiting_hours' => $value('waiting_hours', 0),
         ]);
     }
 
-    private function coordinate(mixed $value, int $index): ?float
+    private function coordinatePair(mixed $value): ?array
     {
         $parts = array_map('trim', explode(',', (string) $value));
-        return isset($parts[$index]) && is_numeric($parts[$index]) ? (float) $parts[$index] : null;
+        if (count($parts) !== 2 || !is_numeric($parts[0]) || !is_numeric($parts[1])) {
+            return null;
+        }
+
+        return [(float) $parts[0], (float) $parts[1]];
     }
 
     public function authorize(): bool
