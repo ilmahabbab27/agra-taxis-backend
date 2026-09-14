@@ -15,6 +15,11 @@ class FareEstimateController extends Controller
     {
     }
 
+    public function external(FareEstimateRequest $request)
+    {
+        return $this->calculate($request);
+    }
+
     public function calculate(FareEstimateRequest $request)
     {
         $vehicle = Vehicle::findOrFail($request->input('vehicle_id'));

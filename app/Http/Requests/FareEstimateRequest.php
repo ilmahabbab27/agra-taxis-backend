@@ -4,9 +4,41 @@ namespace App\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use App\Models\Vehicle;
 
 class FareEstimateRequest extends FormRequest
 {
+    protected function prepareForValidation(): void
+    {
+        if (!$this->isMethod('GET') || !$this->is('api/external/fare-estimate')) {
+            return;
+        }
+
+        $vehicleName = trim((string) $this->query('vehicle'));
+        $vehicle = Vehicle::whereRaw('LOWER(name) = ?', [strtolower($vehicleName)])->first();
+        $vehicle ??= Vehicle::whereRaw('LOWER(name) LIKE ?', ['%' . strtolower($vehicleName) . '%'])->first();
+
+        $this->merge([
+            'vehicle_id' => $vehicle?->id,
+            'service_type' => strtolower((string) $this->query('type')) === 'lorry' ? 'Lorry' : 'Passenger',
+            'pickup_lat' => $this->coordinate($this->query('pickup'), 0),
+            'pickup_lng' => $this->coordinate($this->query('pickup'), 1),
+            'destination_lat' => $this->coordinate($this->query('drop'), 0),
+            'destination_lng' => $this->coordinate($this->query('drop'), 1),
+            'trip' => strtolower((string) $this->query('trip')) === 'round-trip' ? 'Round Trip' : 'One Way',
+            'days' => $this->query('days', 1),
+            'pax' => $this->query('pax', 1),
+            'ac' => strtolower((string) $this->query('ac')) === 'non-ac' ? 'Non AC' : 'AC',
+            'rate_type' => $this->query('rate_type'),
+        ]);
+    }
+
+    private function coordinate(mixed $value, int $index): ?float
+    {
+        $parts = array_map('trim', explode(',', (string) $value));
+        return isset($parts[$index]) && is_numeric($parts[$index]) ? (float) $parts[$index] : null;
+    }
+
     public function authorize(): bool
     {
         return true;

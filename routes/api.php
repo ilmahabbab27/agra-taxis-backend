@@ -40,6 +40,7 @@ Route::post('/admin/login', [AdminAuthController::class, 'login']);
 Route::get('/places/predict', [PlaceController::class, 'predict']);
 Route::post('/estimate', [EstimateController::class, 'calculate']);
 Route::post('/fare-estimate', [FareEstimateController::class, 'calculate']);
+Route::get('/external/fare-estimate', [FareEstimateController::class, 'external']);
 Route::post('/chatbot/message', [ChatbotController::class, 'message']);
 Route::post('/chatbot/estimate', [ChatbotController::class, 'estimate']);
 Route::post('/lorry-chatbot/message', [LorryChatbotController::class, 'message']);
