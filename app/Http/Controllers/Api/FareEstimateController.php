@@ -42,7 +42,7 @@ class FareEstimateController extends Controller
         $trip = $request->input('trip');
         $pickup = $this->resolveLocation($request, 'pickup');
         $destination = $this->resolveLocation($request, 'destination');
-        $distanceKm = $this->resolveDistance($request, $pickup, $destination);
+        $distanceKm = $this->resolveDistance($request, $pickup ?? [], $destination ?? []);
 
         if ($distanceKm === null) {
             return response()->json([
@@ -61,8 +61,8 @@ class FareEstimateController extends Controller
                 (int) $request->input('days', 1),
                 $request->input('ac', 'AC'),
                 $trip,
-                $pickup,
-                $destination,
+                $pickup ?? [],
+                $destination ?? [],
             );
 
             return response()->json([
@@ -97,7 +97,7 @@ class FareEstimateController extends Controller
             $rate,
             $distanceKm,
             $trip,
-            $this->isHillCountry($pickup, $destination),
+            $this->isHillCountry($pickup ?? [], $destination ?? []),
             (float) $request->input('waiting_hours', 0),
         );
 
